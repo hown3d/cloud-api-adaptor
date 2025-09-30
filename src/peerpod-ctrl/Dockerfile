@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM --platform=$TARGETPLATFORM quay.io/confidential-containers/golang-fedora:1.24.7-41 AS builder
+FROM --platform=$BUILDPLATFORM quay.io/confidential-containers/golang-fedora:1.24.7-41 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG CGO_ENABLED=1
@@ -27,7 +27,7 @@ COPY peerpod-ctrl/controllers/ controllers/
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 # CC=gcc because the cgo compiler will always be gcc in image golang-fedora, even for s390x and ppc64le
-RUN CC=gcc CGO_ENABLED=${CGO_ENABLED} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build ${GOFLAGS} -a -o manager main.go
+RUN --mount=type=cache,target=/root/.cache/go-build CC=gcc CGO_ENABLED=${CGO_ENABLED} GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build ${GOFLAGS} -a -o manager main.go
 
 # Target Image
 FROM --platform=$TARGETPLATFORM registry.fedoraproject.org/fedora:41

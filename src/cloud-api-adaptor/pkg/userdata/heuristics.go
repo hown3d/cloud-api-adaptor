@@ -50,3 +50,14 @@ func isAlibabaCloudVM() bool {
 
 	return provider == "Alibaba Cloud"
 }
+
+func isSTACKITVM() bool {
+	t, err := dmidecode.NewDMITable()
+	if err != nil {
+		return false
+	}
+
+	provider := t.Query(dmidecode.KeywordSystemManufacturer)
+
+	return provider == "STACKIT Cloud"
+}

@@ -20,14 +20,14 @@ SOURCES     := $(shell find $(SOURCEDIRS) -name '*.go' -print)
 # End-to-end tests overall run timeout.
 TEST_E2E_TIMEOUT ?= 60m
 # To run a sub-set of tests, set an unanchored regex matching the test's name as in go's test -run option.
-RUN_TESTS ?= ''
+RUN_TESTS ?= ''PACKER_GITHUB_API_TOKEN
 
 RESOURCE_CTRL ?= true
 # BUILTIN_CLOUD_PROVIDERS is used for binary build -- what providers are built in the binaries.
 ifeq ($(RELEASE_BUILD),true)
-	BUILTIN_CLOUD_PROVIDERS ?= alibabacloud aws azure gcp ibmcloud ibmcloud_powervs vsphere
+	BUILTIN_CLOUD_PROVIDERS ?= alibabacloud aws azure gcp ibmcloud ibmcloud_powervs vsphere stackit
 else
-	BUILTIN_CLOUD_PROVIDERS ?= alibabacloud aws azure byom gcp ibmcloud ibmcloud_powervs vsphere libvirt docker
+	BUILTIN_CLOUD_PROVIDERS ?= alibabacloud aws azure byom gcp ibmcloud ibmcloud_powervs vsphere stackit libvirt docker
 endif
 
 all: build

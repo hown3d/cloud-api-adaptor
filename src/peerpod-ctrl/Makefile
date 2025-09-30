@@ -63,7 +63,7 @@ endif
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
-BUILTIN_CLOUD_PROVIDERS ?= alibabacloud aws azure byom docker gcp ibmcloud libvirt vsphere
+BUILTIN_CLOUD_PROVIDERS ?= alibabacloud aws azure byom docker gcp ibmcloud libvirt vsphere stackit
 # Build tags required to build cloud-api-adaptor are derived from BUILTIN_CLOUD_PROVIDERS.
 # When libvirt is specified, CGO_ENABLED is set to 1.
 space := $() $()
@@ -132,7 +132,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # (i.e. docker build --platform linux/arm64 ). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
-docker-build: test ## Build docker image with the manager.
+docker-build: ## Build docker image with the manager.
 	cd ../ && docker build -t ${IMG} -f peerpod-ctrl/Dockerfile . --build-arg CGO_ENABLED=$(CGO_ENABLED) --build-arg GOFLAGS=$(GOFLAGS)
 
 .PHONY: docker-push

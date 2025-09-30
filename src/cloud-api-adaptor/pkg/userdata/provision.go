@@ -32,6 +32,9 @@ const (
 	// Ref: https://www.alibabacloud.com/help/en/ecs/user-guide/customize-the-initialization-configuration-for-an-instance
 	AlibabaCloudImdsUrl         = "http://100.100.100.200/latest/dynamic/instance-identity/document"
 	AlibabaCloudUserDataImdsUrl = "http://100.100.100.200/latest/user-data"
+
+	// Ref: https://docs.openstack.org/nova/rocky/user/metadata-service.html
+	STACKITUserDataImdsUrl = "http://169.254.169.254/latest/user-data"
 )
 
 var logger = log.New(log.Writer(), "[userdata/provision] ", log.LstdFlags|log.Lmsgprefix)
@@ -124,6 +127,14 @@ func (a AlibabaCloudDataProvider) GetUserData(ctx context.Context) ([]byte, erro
 	return imdsGet(ctx, url, false, nil)
 }
 
+type STACKITDataProvider struct { DefaultRetry }
+
+func (p STACKITDataProvider) GetUserData(ctx context.Context) ([]byte, error) {
+	url := STACKITUserDataImdsUrl
+	logger.Printf("provider: STACKIT, userDataUrl: %s\n", url)
+	return imdsGet(ctx, url, false, nil)
+}
+
 func newProvider(ctx context.Context) (UserDataProvider, error) {
 	// This checks for the presence of a file and doesn't rely on http req like the
 	// azure, aws ones, thereby making it faster and hence checking this first
@@ -145,6 +156,11 @@ func newProvider(ctx context.Context) (UserDataProvider, error) {
 
 	if isAlibabaCloudVM() {
 		return AlibabaCloudDataProvider{}, nil
+	}
+
+
+	if isSTACKITVM() {
+		return STACKITDataProvider{}, nil
 	}
 
 	return nil, fmt.Errorf("unsupported user data provider")

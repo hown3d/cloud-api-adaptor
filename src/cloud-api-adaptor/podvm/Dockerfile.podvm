@@ -58,7 +58,8 @@ RUN ./hack/cross-build-extras.sh
 
 # Will rebuild only the local binaries (agent-protocol-forwarder/process-user-data)
 # To rebuild everything update to "make FORCE=true image"
-RUN make image
+ENV PACKER_LOG=1
+RUN --mount=type=cache,target=/usr/local/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/root/.cache/packer make image
 
 FROM scratch
 COPY --from=podvm_builder /src/cloud-api-adaptor/podvm/output/*.qcow2 /

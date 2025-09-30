@@ -28,6 +28,7 @@ Please refer to the instructions mentioned in the following [doc](./install/READ
 * ibmcloud
 * libvirt
 * vsphere
+* stackit
 
 ### Adding a new provider
 

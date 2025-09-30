@@ -35,7 +35,8 @@ COPY cloud-api-adaptor/cmd   ./cmd
 COPY cloud-api-adaptor/pkg   ./pkg
 COPY cloud-api-adaptor/proto ./proto
 
-RUN CC=gcc ARCH=$TARGETARCH make COMMIT=$COMMIT VERSION=$VERSION RELEASE_BUILD=$RELEASE_BUILD cloud-api-adaptor
+RUN --mount=type=cache,target=/root/.cache/go-build \
+  CC=gcc ARCH=$TARGETARCH make COMMIT=$COMMIT VERSION=$VERSION RELEASE_BUILD=$RELEASE_BUILD cloud-api-adaptor
 
 FROM builder-release AS iptables
 
@@ -43,18 +44,18 @@ ARG TARGETARCH
 
 WORKDIR /iptables
 RUN --mount=type=bind,target=/versions.yaml,source=cloud-api-adaptor/versions.yaml,readonly \
-    version=$(yq -r .tools.iptables-wrapper /versions.yaml) && \
-    GOARCH=$TARGETARCH go install "github.com/kubernetes-sigs/iptables-wrappers@$version" && \
-    shopt -s globstar && \
-    cp /go/bin/**/iptables-wrappers ./iptables-wrapper && \
-    curl -L -o iptables-wrapper-installer.sh "https://raw.githubusercontent.com/kubernetes-sigs/iptables-wrappers/${version#v*-*-}/iptables-wrapper-installer.sh" && \
-    chmod 755 iptables-wrapper-installer.sh
+  version=$(yq -r .tools.iptables-wrapper /versions.yaml) && \
+  GOARCH=$TARGETARCH go install "github.com/kubernetes-sigs/iptables-wrappers@$version" && \
+  shopt -s globstar && \
+  cp /go/bin/**/iptables-wrappers ./iptables-wrapper && \
+  curl -L -o iptables-wrapper-installer.sh "https://raw.githubusercontent.com/kubernetes-sigs/iptables-wrappers/${version#v*-*-}/iptables-wrapper-installer.sh" && \
+  chmod 755 iptables-wrapper-installer.sh
 
 FROM --platform=$TARGETPLATFORM $BASE AS base-release
 
 RUN dnf install -y iptables iptables-legacy iptables-nft nftables && dnf clean all
 RUN --mount=type=cache,target=/iptables,from=iptables,source=/iptables,readonly \
-    cd /iptables && ./iptables-wrapper-installer.sh --no-sanity-check --no-cleanup
+  cd /iptables && ./iptables-wrapper-installer.sh --no-sanity-check --no-cleanup
 
 FROM base-release AS base-dev
 RUN dnf install -y libvirt-libs /usr/bin/ssh && dnf clean all

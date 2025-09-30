@@ -1,0 +1,63 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../yamls
+
+images:
+  - name: cloud-api-adaptor
+    newName: reg3.infra.ske.eu01.stackit.cloud/confidential-containers/cloud-api-adaptor # change image if needed
+    newTag: latest
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: peer-pods-cm
+    namespace: confidential-containers-system
+    literals:
+      - CLOUD_PROVIDER="stackit"
+      - PODVM_IMAGE_NAME="069c9c75-d657-4319-bd2c-23236b88d274" # set from step "Build Pod VM Image" in stackit/README.md
+      - STACKIT_PROJECT_ID="6c600839-6c5e-411a-957a-d5e6c405b0cf" # set
+      - STACKIT_NETWORK_ID="793450d9-1424-44d4-bbf0-1ec6da9f6c97"
+      - STACKIT_REGION="eu01"
+      - STACKIT_IAAS_URL="https://iaas.api.eu01.qa.stackit.cloud"
+      - STACKIT_TOKEN_BASEURL="https://service-account.api.eu01.qa.stackit.cloud/token"
+      - STACKIT_AVAILABILITY_ZONE="eu01-1"
+      - STACKIT_SECURITY_GROUP="f317326c-9124-4436-8fa3-1bf18ff7bfad"
+    #- DISABLECVM="true" # Uncomment it if you want a generic VM
+    #- PEERPODS_LIMIT_PER_NODE="10" # Max number of peer pods that can be created per node. Default is 10
+    #- REMOTE_HYPERVISOR_ENDPOINT="/run/peerpod/hypervisor.sock" # Path to Kata remote hypervisor socket. Default is /run/peerpod/hypervisor.sock
+    #- PEER_PODS_DIR="/run/peerpod/pods" # Path to peer pods directory. Default is /run/peerpod/pods
+    #- PAUSE_IMAGE="" # Uncomment and set if you want to use a specific pause image
+    #- ROOT_VOLUME_SIZE="10" # Uncomment and set if you want to use a specific root volume size. Defaults to 10
+    #- TUNNEL_TYPE="" # Uncomment and set if you want to use a specific tunnel type. Defaults to vxlan
+    #- VXLAN_PORT="" # Uncomment and set if you want to use a specific vxlan port. Defaults to 4789
+    #- ENABLE_SCRATCH_SPACE="false"  # Enable scratch space for pod VMs. Default is false
+##TLS_SETTINGS
+#- CACERT_FILE="/etc/certificates/ca.crt" # for TLS
+#- CERT_FILE="/etc/certificates/client.crt" # for TLS
+#- CERT_KEY="/etc/certificates/client.key" # for TLS
+#- TLS_SKIP_VERIFY="" # for testing only
+##TLS_SETTINGS
+
+secretGenerator:
+- name: peer-pods-secret
+  namespace: confidential-containers-system
+  files:
+    - credentials.json=stackit-service-account.json
+##TLS_SETTINGS
+#- name: certs-for-tls
+#  namespace: confidential-containers-system
+#  files:
+#  - <path_to_ca.crt> # set - path to ca.crt
+#  - <path_to_client.crt> # set - path to client.crt
+#  - <path_to_client.key> # set - path to client.key
+##TLS_SETTINGS
+
+patches:
+  - path: credentials_mount.yaml
+patchesStrategicMerge:
+##TLS_SETTINGS
+#- tls_certs_volume_mount.yaml # set (for tls)
+##TLS_SETTINGS
