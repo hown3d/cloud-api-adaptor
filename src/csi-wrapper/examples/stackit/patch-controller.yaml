@@ -1,0 +1,53 @@
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: csi-controller-wrapper
+          args:
+            - -v=5
+            - --endpoint=/var/lib/csi/sockets/pluginproxy/csi-controller-wrapper.sock
+            - --target-endpoint=/var/lib/csi/sockets/pluginproxy/csi.sock
+            - --namespace=kube-system
+            - --kubeconfig=/var/run/secrets/gardener.cloud/shoot/generic-kubeconfig/kubeconfig
+          image: reg3.infra.ske.eu01.stackit.cloud/confidential-containers/csi-controller-wrapper:latest
+          securityContext:
+            runAsGroup: 1337
+            runAsUser: 1337
+          volumeMounts:
+            - mountPath: /var/lib/csi/sockets/pluginproxy
+              name: socket-dir
+            - mountPath: /var/run/secrets/gardener.cloud/shoot/generic-kubeconfig
+              name: kubeconfig-csi-wrapper
+              readOnly: true
+        - name: openstack-csi-attacher
+          env:
+            - name: ADDRESS
+              value: /var/lib/csi/sockets/pluginproxy/csi-controller-wrapper.sock
+
+        - name: openstack-csi-provisioner
+          env:
+            - name: ADDRESS
+              value: /var/lib/csi/sockets/pluginproxy/csi-controller-wrapper.sock
+
+        - name: openstack-csi-resizer
+          env:
+            - name: ADDRESS
+              value: /var/lib/csi/sockets/pluginproxy/csi-controller-wrapper.sock
+      volumes:
+        - name: kubeconfig-csi-wrapper
+          projected:
+            defaultMode: 420
+            sources:
+            - secret:
+                items:
+                - key: kubeconfig
+                  path: kubeconfig
+                name: generic-token-kubeconfig-893de528
+                optional: false
+            - secret:
+                items:
+                - key: token
+                  path: token
+                name: shoot-access-csi-wrapper
+                optional: false

@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: csi-config
+data:
+  cloudprovider.conf: |
+    [BlockStorage]
+    rescan-on-resize=true
+    node-volume-attach-limit=24
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app
+  annotations:
+    io.katacontainers.config.hypervisor.default_memory: "4096"
+    io.katacontainers.config.hypervisor.default_vcpus: "2"
+spec:
+  runtimeClassName: kata-remote
+  serviceAccountName: csi-wrapper-podvm
+  volumes:
+  - name: persistent-storage
+    persistentVolumeClaim:
+      claimName: peerpod-claim
+  - name: kubelet-data-dir
+    hostPath:
+      path: /var/lib/kubelet
+      type: Directory
+  - emptyDir: {}
+    name: plugin-dir
+  - hostPath:
+      path: /dev
+      type: Directory
+    name: device-dir
+  - name: config
+    configMap:
+      name: csi-config
+
+  containers:
+  - name: app
+    image: ubuntu
+    command: ["/bin/sh"]
+    args: ["-c", "while true; do echo $(date -u) >> /data/out.txt; sleep 5; done"]
+    volumeMounts:
+    - name: persistent-storage
+      mountPath: /data
+      mountPropagation: HostToContainer
+
+  - name: csi-podvm-node-driver
+    image: registry.ske.stackit.cloud/stackitcloud/cinder-csi-plugin:v1.33.0-ske-1
+    imagePullPolicy: Always
+    securityContext:
+      privileged: true
+      runAsNonRoot: false
+      runAsUser: 0
+    args:
+      - /bin/cinder-csi-plugin
+      - --endpoint=unix:///csi/csi.sock
+      - --cloud-config=/config/cloudprovider.conf
+      - --provide-controller-service=false
+    volumeMounts:
+      - name: kubelet-data-dir
+        mountPath: /var/lib/kubelet
+        mountPropagation: Bidirectional
+      - mountPath: /csi
+        name: plugin-dir
+      - mountPath: /dev
+        name: device-dir
+      - mountPath: /config
+        name: config
+
+  - name: csi-podvm-wrapper
+    env:
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+      - name: POD_NAME_SPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: POD_UID
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.uid
+      - name: POD_NODE_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: spec.nodeName
+    image: quay.io/confidential-containers/csi-podvm-wrapper:latest
+    imagePullPolicy: Always
+    command: ["/usr/bin/csi-podvm-wrapper"]
+    args:
+    - --v=2
+    - --endpoint=/csi/csi-podvm-wrapper.sock
+    - --target-endpoint=/csi/csi.sock
+    - --namespace=kube-system
+    volumeMounts:
+      - mountPath: /csi
+        name: plugin-dir

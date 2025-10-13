@@ -1,0 +1,11 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: csi-wrapped
+parameters:
+  type: storage_premium_perf0
+  peerpod: 'true'
+provisioner: cinder.csi.openstack.org
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
