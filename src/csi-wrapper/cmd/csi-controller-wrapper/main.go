@@ -19,12 +19,15 @@ func init() {
 	_ = flag.Set("logtostderr", "true") // TODO: error check
 }
 
+var kubeconfig string
+
 func main() {
 	cfg := config.Endpoints{}
 
 	flag.StringVar(&cfg.Endpoint, "endpoint", "/csi/csi-controller-wrapper.sock", "Wrapper CSI Controller service endpoint path")
 	flag.StringVar(&cfg.Namespace, "namespace", "default", "The namespace where the peer pod volume crd object will be created")
 	flag.StringVar(&cfg.TargetEndpoint, "target-endpoint", "/csi/csi.sock", "Target CSI Controller service endpoint path")
+	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig")
 
 	flag.Parse()
 
@@ -39,7 +42,7 @@ func main() {
 	glog.Infof("Endpoint: %s ", cfg.Endpoint)
 	glog.Infof("TargetEndpoint: %s", cfg.TargetEndpoint)
 
-	k8sconfig, err := clientcmd.BuildConfigFromFlags("", "")
+	k8sconfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		glog.Fatalf("Build kubeconfig failed: %v", err)
 	}
