@@ -13,7 +13,7 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-          image: quay.io/confidential-containers/csi-node-wrapper:latest
+          image: reg3.infra.ske.eu01.stackit.cloud/confidential-containers/csi-node-wrapper:latest
           imagePullPolicy: IfNotPresent
           volumeMounts:
             - mountPath: /csi

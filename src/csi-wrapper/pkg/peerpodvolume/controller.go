@@ -17,6 +17,10 @@ import (
 	"k8s.io/client-go/util/workqueue"
 )
 
+type SyncFunc func(*peerpodvolumeV1alpha1.PeerpodVolume) error
+
+type DeleteFunc func(*peerpodvolumeV1alpha1.PeerpodVolume) error
+
 // PeerpodvolumeController is the controller implementation for peerpodvolume resources
 type PeerpodvolumeController struct {
 	namespace      string
@@ -24,8 +28,8 @@ type PeerpodvolumeController struct {
 	lister         listers.PeerpodVolumeLister
 	synced         cache.InformerSynced
 	queue          workqueue.RateLimitingInterface
-	syncFunction   func(peerPodVolume *peerpodvolumeV1alpha1.PeerpodVolume)
-	deleteFunction func(peerPodVolume *peerpodvolumeV1alpha1.PeerpodVolume)
+	syncFunction   SyncFunc
+	deleteFunction DeleteFunc
 }
 
 // newPeerpodvolumeController returns a new sample controller
@@ -33,10 +37,9 @@ func newPeerpodvolumeController(
 	clientset clientset.Interface,
 	informer informersv1alpha1.PeerpodVolumeInformer,
 	namespace string,
-	syncFunction func(peerPodVolume *peerpodvolumeV1alpha1.PeerpodVolume),
-	deleteFunction func(peerPodVolume *peerpodvolumeV1alpha1.PeerpodVolume),
-) *PeerpodvolumeController {
-
+	syncFunction SyncFunc,
+	deleteFunction DeleteFunc,
+) (*PeerpodvolumeController, error) {
 	controller := &PeerpodvolumeController{
 		namespace:      namespace,
 		clientset:      clientset,
@@ -47,8 +50,7 @@ func newPeerpodvolumeController(
 		deleteFunction: deleteFunction,
 	}
 
-	// TODO: error check
-	_, _ = informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: controller.enqueuePeerpodvolume,
 		UpdateFunc: func(old, new interface{}) {
 			oldPeerpodvolume := old.(*peerpodvolumeV1alpha1.PeerpodVolume)
@@ -61,7 +63,7 @@ func newPeerpodvolumeController(
 		DeleteFunc: controller.handleDeletedPeerpodvolume,
 	})
 
-	return controller
+	return controller, err
 }
 
 func (c *PeerpodvolumeController) handleDeletedPeerpodvolume(obj interface{}) {
@@ -76,7 +78,9 @@ func (c *PeerpodvolumeController) handleDeletedPeerpodvolume(obj interface{}) {
 	glog.Infof("Got deleted csi peer pod volume Info for %s", volumeID)
 	// call deleteFunction from node service or controller service
 	if c.deleteFunction != nil {
-		c.deleteFunction(peerPodVolume)
+		if err := c.deleteFunction(peerPodVolume); err != nil {
+			glog.Errorf("deleting peerpod volume %s/%s: %v", peerPodVolume.Namespace, peerPodVolume.Name, err)
+		}
 	}
 }
 
@@ -123,7 +127,6 @@ func (c *PeerpodvolumeController) processNextWorkItem() bool {
 
 func (c *PeerpodvolumeController) syncHandler(key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
-
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("invalid resource key: %s", key))
 		return nil
@@ -152,7 +155,9 @@ func (c *PeerpodvolumeController) syncHandler(key string) error {
 	glog.Infof("Detected Peerpodvolume json.Marshal.string: %s\n", objString)
 	// call the syncFunction from node service or controller service
 	if c.syncFunction != nil {
-		c.syncFunction(peerPodVolume)
+		if err := c.syncFunction(peerPodVolume); err != nil {
+			glog.Errorf("syncing peerpod volume %s/%s: %v", peerPodVolume.Namespace, peerPodVolume.Name, err)
+		}
 	}
 	return nil
 }

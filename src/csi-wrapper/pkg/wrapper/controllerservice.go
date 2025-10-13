@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/confidential-containers/cloud-api-adaptor/src/csi-wrapper/pkg/apis/peerpodvolume/v1alpha1"
 	peerpodvolumeV1alpha1 "github.com/confidential-containers/cloud-api-adaptor/src/csi-wrapper/pkg/apis/peerpodvolume/v1alpha1"
@@ -66,10 +67,10 @@ func NewControllerService(targetEndpoint, namespace string, peerpodvolumeClientS
 	}
 }
 
-func (s *ControllerService) redirect(ctx context.Context, req interface{}, fn func(context.Context, csi.ControllerClient)) error {
+func (s *ControllerService) redirect(ctx context.Context, req interface{}, fn func(context.Context, csi.ControllerClient) error) error {
 	// grpc.Dial is deprecated and supported only with grpc 1.x
 	//nolint:staticcheck
-	conn, err := grpc.Dial(s.TargetEndpoint, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(s.TargetEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return err
 	}
@@ -77,13 +78,11 @@ func (s *ControllerService) redirect(ctx context.Context, req interface{}, fn fu
 
 	client := csi.NewControllerClient(conn)
 
-	fn(ctx, client)
-
-	return nil
+	return fn(ctx, client)
 }
 
 func (s *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (res *csi.CreateVolumeResponse, err error) {
-	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 		peerpod := req.Parameters[PeerpodParamKey]
 		if peerpod != "" {
 			// Delete peerpod key from req parameters because csi driver may check parameters strictly.
@@ -98,8 +97,12 @@ func (s *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVol
 		if peerpod != "" {
 			volumeID := res.GetVolume().VolumeId
 			normalizedVolumeID := utils.NormalizeVolumeID(volumeID)
-			_, _ = s.createPeerpodVolume(normalizedVolumeID, volumeName)
+			_, err = s.createPeerpodVolume(normalizedVolumeID, volumeName)
+			if err != nil {
+				return err
+			}
 		}
+		return nil
 	}); e != nil {
 		return nil, e
 	}
@@ -108,21 +111,21 @@ func (s *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVol
 }
 
 func (s *ControllerService) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (res *csi.DeleteVolumeResponse, err error) {
-	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 		res, err = client.DeleteVolume(ctx, req)
 
 		volumeID := utils.NormalizeVolumeID(req.GetVolumeId())
 		_, err = s.PeerpodvolumeClient.ConfidentialcontainersV1alpha1().PeerpodVolumes(s.Namespace).Get(context.Background(), volumeID, metav1.GetOptions{})
 		if err != nil {
 			glog.Infof("Not found PeerpodVolume with volumeID: %v, err: %v", volumeID, err.Error())
-		} else {
-			ppErr := s.PeerpodvolumeClient.ConfidentialcontainersV1alpha1().PeerpodVolumes(s.Namespace).Delete(context.Background(), volumeID, metav1.DeleteOptions{})
-			if ppErr != nil {
-				glog.Warningf("Failed to delete to Peerpodvolume by volumeID: %v, err: %v", volumeID, ppErr.Error())
-			} else {
-				glog.Infof("The peerPodVolume is deleted, volumeID: %v", volumeID)
-			}
+			return nil
 		}
+		err := s.PeerpodvolumeClient.ConfidentialcontainersV1alpha1().PeerpodVolumes(s.Namespace).Delete(context.Background(), volumeID, metav1.DeleteOptions{})
+		if err != nil {
+			return fmt.Errorf("Failed to delete to Peerpodvolume by volumeID: %v, err: %v", volumeID, err.Error())
+		}
+		glog.Infof("The peerPodVolume is deleted, volumeID: %v", volumeID)
+		return err
 	}); e != nil {
 		return nil, e
 	}
@@ -141,8 +144,9 @@ func (s *ControllerService) ControllerPublishVolume(ctx context.Context, req *cs
 		// In this case, we need to create the peerpod volume object here.
 		peerPod := req.VolumeContext[PeerpodParamKey]
 		if peerPod == "" {
-			if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+			if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 				res, err = client.ControllerPublishVolume(ctx, req)
+				return err
 			}); e != nil {
 				return nil, e
 			}
@@ -212,8 +216,9 @@ func (s *ControllerService) ControllerUnpublishVolume(ctx context.Context, req *
 	savedPeerpodvolume, err := s.PeerpodvolumeClient.ConfidentialcontainersV1alpha1().PeerpodVolumes(s.Namespace).Get(context.Background(), volumeID, metav1.GetOptions{})
 	if err != nil {
 		glog.Infof("Not found PeerpodVolume with volumeID: %v, err: %v", volumeID, err.Error())
-		if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+		if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 			res, err = client.ControllerUnpublishVolume(ctx, req)
+			return err
 		}); e != nil {
 			return nil, e
 		}
@@ -225,13 +230,13 @@ func (s *ControllerService) ControllerUnpublishVolume(ctx context.Context, req *
 			glog.Infof("The modified ControllerUnpublishVolumeRequest is :%v", req)
 			ctx := context.Background()
 			// TODO: error check
-			_ = s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+			err = s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 				response, err := client.ControllerUnpublishVolume(ctx, req)
 				if err != nil {
-					glog.Errorf("Failed to run ControllerUnpublishVolume with modified ControllerUnpublishVolume, err: %v", err.Error())
-				} else {
-					glog.Infof("The ControllerUnpublishVolumeResponse for peer pod is :%v", response)
+					return fmt.Errorf("Failed to run ControllerUnpublishVolume with modified ControllerUnpublishVolume, err: %v", err.Error())
 				}
+				glog.Infof("The ControllerUnpublishVolumeResponse for peer pod is :%v", response)
+				return nil
 			})
 		}
 
@@ -275,8 +280,9 @@ func (s *ControllerService) ControllerUnpublishVolume(ctx context.Context, req *
 }
 
 func (s *ControllerService) ValidateVolumeCapabilities(ctx context.Context, req *csi.ValidateVolumeCapabilitiesRequest) (res *csi.ValidateVolumeCapabilitiesResponse, err error) {
-	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 		res, err = client.ValidateVolumeCapabilities(ctx, req)
+		return err
 	}); e != nil {
 		return nil, e
 	}
@@ -285,8 +291,9 @@ func (s *ControllerService) ValidateVolumeCapabilities(ctx context.Context, req 
 }
 
 func (s *ControllerService) ListVolumes(ctx context.Context, req *csi.ListVolumesRequest) (res *csi.ListVolumesResponse, err error) {
-	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 		res, err = client.ListVolumes(ctx, req)
+		return err
 	}); e != nil {
 		return nil, e
 	}
@@ -295,8 +302,9 @@ func (s *ControllerService) ListVolumes(ctx context.Context, req *csi.ListVolume
 }
 
 func (s *ControllerService) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (res *csi.GetCapacityResponse, err error) {
-	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 		res, err = client.GetCapacity(ctx, req)
+		return err
 	}); e != nil {
 		return nil, e
 	}
@@ -305,8 +313,9 @@ func (s *ControllerService) GetCapacity(ctx context.Context, req *csi.GetCapacit
 }
 
 func (s *ControllerService) ControllerGetCapabilities(ctx context.Context, req *csi.ControllerGetCapabilitiesRequest) (res *csi.ControllerGetCapabilitiesResponse, err error) {
-	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 		res, err = client.ControllerGetCapabilities(ctx, req)
+		return err
 	}); e != nil {
 		return nil, e
 	}
@@ -315,8 +324,9 @@ func (s *ControllerService) ControllerGetCapabilities(ctx context.Context, req *
 }
 
 func (s *ControllerService) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequest) (res *csi.CreateSnapshotResponse, err error) {
-	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 		res, err = client.CreateSnapshot(ctx, req)
+		return err
 	}); e != nil {
 		return nil, e
 	}
@@ -325,8 +335,9 @@ func (s *ControllerService) CreateSnapshot(ctx context.Context, req *csi.CreateS
 }
 
 func (s *ControllerService) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotRequest) (res *csi.DeleteSnapshotResponse, err error) {
-	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 		res, err = client.DeleteSnapshot(ctx, req)
+		return err
 	}); e != nil {
 		return nil, e
 	}
@@ -335,8 +346,9 @@ func (s *ControllerService) DeleteSnapshot(ctx context.Context, req *csi.DeleteS
 }
 
 func (s *ControllerService) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (res *csi.ListSnapshotsResponse, err error) {
-	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 		res, err = client.ListSnapshots(ctx, req)
+		return err
 	}); e != nil {
 		return nil, e
 	}
@@ -345,8 +357,9 @@ func (s *ControllerService) ListSnapshots(ctx context.Context, req *csi.ListSnap
 }
 
 func (s *ControllerService) ControllerExpandVolume(ctx context.Context, req *csi.ControllerExpandVolumeRequest) (res *csi.ControllerExpandVolumeResponse, err error) {
-	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 		res, err = client.ControllerExpandVolume(ctx, req)
+		return err
 	}); e != nil {
 		return nil, e
 	}
@@ -355,8 +368,9 @@ func (s *ControllerService) ControllerExpandVolume(ctx context.Context, req *csi
 }
 
 func (s *ControllerService) ControllerGetVolume(ctx context.Context, req *csi.ControllerGetVolumeRequest) (res *csi.ControllerGetVolumeResponse, err error) {
-	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) {
+	if e := s.redirect(ctx, req, func(ctx context.Context, client csi.ControllerClient) error {
 		res, err = client.ControllerGetVolume(ctx, req)
+		return err
 	}); e != nil {
 		return nil, e
 	}
@@ -364,7 +378,7 @@ func (s *ControllerService) ControllerGetVolume(ctx context.Context, req *csi.Co
 	return
 }
 
-func (s *ControllerService) SyncHandler(peerPodVolume *peerpodvolumeV1alpha1.PeerpodVolume) {
+func (s *ControllerService) SyncHandler(peerPodVolume *peerpodvolumeV1alpha1.PeerpodVolume) error {
 	glog.Infof("syncHandler from ControllerService: %v ", peerPodVolume)
 	if peerPodVolume.Status.State == peerpodvolumeV1alpha1.PeerPodVSIIDReady && peerPodVolume.Spec.DevicePath == "" {
 		// After peerpod vsi id is ready in crd object, we can reproduce the ControllerPublishVolumeRequest
@@ -381,48 +395,49 @@ func (s *ControllerService) SyncHandler(peerPodVolume *peerpodvolumeV1alpha1.Pee
 		wrapperRequest := peerPodVolume.Spec.WrapperControllerPublishVolumeReq
 		var modifiedRequest csi.ControllerPublishVolumeRequest
 		if err := (&jsonpb.Unmarshaler{}).Unmarshal(bytes.NewReader([]byte(wrapperRequest)), &modifiedRequest); err != nil {
-			glog.Errorf("Failed to convert to ControllerPublishVolumeRequest, err: %v", err.Error())
-		} else {
-			modifiedRequest.NodeId = vsiID
-			glog.Infof("The modified ControllerPublishVolumeRequest is :%v", modifiedRequest)
-			ctx := context.Background()
-			// TODO: error check
-			_ = s.redirect(ctx, modifiedRequest, func(ctx context.Context, client csi.ControllerClient) {
-				response, err := client.ControllerPublishVolume(ctx, &modifiedRequest)
-				if err != nil {
-					glog.Errorf("Failed to reproduce ControllerPublishVolume with modified ControllerPublishVolumeRequest, err: %v", err.Error())
-				} else {
-					glog.Infof("The ControllerPublishVolumeResponse for peer pod is :%v", response)
-					var resBuf bytes.Buffer
-					if err := (&jsonpb.Marshaler{}).Marshal(&resBuf, response); err != nil {
-						glog.Error(err, "Error happens while Marshal ControllerPublishVolumeResponse")
-					}
-					resJsonString := resBuf.String()
-					glog.Infof("ControllerPublishVolumeResponse for peer pod JSON string: %s\n", resJsonString)
-					peerPodVolume.Spec.WrapperControllerPublishVolumeRes = resJsonString
-					devicePath := response.PublishContext["device-path"]
-					glog.Infof("device-path for peer pod VM: %s\n", devicePath)
-					peerPodVolume.Spec.DevicePath = devicePath
-					updatedPeerPodVolume, err := s.PeerpodvolumeClient.ConfidentialcontainersV1alpha1().PeerpodVolumes(s.Namespace).Update(context.Background(), peerPodVolume, metav1.UpdateOptions{})
-					if err != nil {
-						glog.Errorf("Error happens while Update PeerpodVolume with ControllerPublishVolumeResponse for peer pod, err: %v", err.Error())
-						return
-					}
-					updatedPeerPodVolume.Status = v1alpha1.PeerpodVolumeStatus{
-						State: v1alpha1.ControllerPublishVolumeApplied,
-					}
-					_, err = s.PeerpodvolumeClient.ConfidentialcontainersV1alpha1().PeerpodVolumes(s.Namespace).UpdateStatus(context.Background(), updatedPeerPodVolume, metav1.UpdateOptions{})
-					if err != nil {
-						glog.Errorf("Error happens while Update PeerpodVolume status to ControllerPublishVolumeApplied, err: %v", err.Error())
-					}
-				}
-			})
+			return fmt.Errorf("Failed to convert to ControllerPublishVolumeRequest, err: %v", err.Error())
 		}
+		modifiedRequest.NodeId = vsiID
+		glog.Infof("The modified ControllerPublishVolumeRequest is :%v", modifiedRequest)
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		defer cancel()
+		// TODO: error check
+		return s.redirect(ctx, modifiedRequest, func(ctx context.Context, client csi.ControllerClient) error {
+			response, err := client.ControllerPublishVolume(ctx, &modifiedRequest)
+			if err != nil {
+				return fmt.Errorf("Failed to reproduce ControllerPublishVolume with modified ControllerPublishVolumeRequest, err: %v", err.Error())
+			}
+			glog.Infof("The ControllerPublishVolumeResponse for peer pod is :%v", response)
+			var resBuf bytes.Buffer
+			if err := (&jsonpb.Marshaler{}).Marshal(&resBuf, response); err != nil {
+				glog.Error(err, "Error happens while Marshal ControllerPublishVolumeResponse")
+			}
+			resJsonString := resBuf.String()
+			glog.Infof("ControllerPublishVolumeResponse for peer pod JSON string: %s\n", resJsonString)
+			peerPodVolume.Spec.WrapperControllerPublishVolumeRes = resJsonString
+			devicePath := response.PublishContext["device-path"]
+			glog.Infof("device-path for peer pod VM: %s\n", devicePath)
+			peerPodVolume.Spec.DevicePath = devicePath
+			updatedPeerPodVolume, err := s.PeerpodvolumeClient.ConfidentialcontainersV1alpha1().PeerpodVolumes(s.Namespace).Update(context.Background(), peerPodVolume, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("Error happens while Update PeerpodVolume with ControllerPublishVolumeResponse for peer pod, err: %v", err.Error())
+			}
+			updatedPeerPodVolume.Status = v1alpha1.PeerpodVolumeStatus{
+				State: v1alpha1.ControllerPublishVolumeApplied,
+			}
+			_, err = s.PeerpodvolumeClient.ConfidentialcontainersV1alpha1().PeerpodVolumes(s.Namespace).UpdateStatus(ctx, updatedPeerPodVolume, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("Error happens while Update PeerpodVolume status to ControllerPublishVolumeApplied, err: %v", err.Error())
+			}
+			return nil
+		})
 	}
+	return nil
 }
 
-func (s *ControllerService) DeleteFunction(peerPodVolume *peerpodvolumeV1alpha1.PeerpodVolume) {
+func (s *ControllerService) DeleteFunction(peerPodVolume *peerpodvolumeV1alpha1.PeerpodVolume) error {
 	glog.Infof("deleteFunction from controllerService: %v ", peerPodVolume)
+	return nil
 }
 
 func (s *ControllerService) createPeerpodVolume(volumeID, volumeName string) (*v1alpha1.PeerpodVolume, error) {

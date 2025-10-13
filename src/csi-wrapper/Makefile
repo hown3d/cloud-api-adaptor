@@ -27,6 +27,8 @@ vet:
 clean:
 	rm -fr $(BUILD_ROOT)/build/*
 
+images: csi-controller-wrapper-docker csi-node-wrapper-docker csi-podvm-wrapper-docker
+
 .PHONY: csi-node-wrapper-docker
 csi-node-wrapper-docker:
 	cd ../ && docker buildx build --platform "linux/$(ARCH)" \

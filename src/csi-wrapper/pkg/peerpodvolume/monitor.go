@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	peerpodvolumeV1alpha1 "github.com/confidential-containers/cloud-api-adaptor/src/csi-wrapper/pkg/apis/peerpodvolume/v1alpha1"
 	clientset "github.com/confidential-containers/cloud-api-adaptor/src/csi-wrapper/pkg/generated/peerpodvolume/clientset/versioned"
 	informers "github.com/confidential-containers/cloud-api-adaptor/src/csi-wrapper/pkg/generated/peerpodvolume/informers/externalversions"
 )
@@ -30,20 +29,22 @@ type csiPodVolumeMonitor struct {
 func NewPodVolumeMonitor(
 	client *clientset.Clientset,
 	namespace string,
-	syncFunction func(peerPodVolume *peerpodvolumeV1alpha1.PeerpodVolume),
-	deleteFunction func(peerPodVolume *peerpodvolumeV1alpha1.PeerpodVolume),
+	syncFunction SyncFunc,
+	deleteFunction DeleteFunc,
 ) (CsiPodVolumeMonitor, error) {
-
 	informerFactory := informers.NewSharedInformerFactory(client, time.Second*30)
 	informer := informerFactory.Confidentialcontainers().V1alpha1().PeerpodVolumes()
 
-	controller := newPeerpodvolumeController(
+	controller, err := newPeerpodvolumeController(
 		client,
 		informer,
 		namespace,
 		syncFunction,
 		deleteFunction,
 	)
+	if err != nil {
+		return nil, err
+	}
 
 	m := &csiPodVolumeMonitor{
 		controller:      controller,
@@ -56,7 +57,6 @@ func NewPodVolumeMonitor(
 }
 
 func (m *csiPodVolumeMonitor) Start(ctx context.Context) error {
-
 	m.informerFactory.Start(m.stopCh)
 	go m.controller.Run(2, m.stopCh)
 
@@ -64,7 +64,7 @@ func (m *csiPodVolumeMonitor) Start(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		_ = m.Shutdown() // TODO: error check
+		return m.Shutdown() // TODO: error check
 	case <-m.stopCh:
 	}
 

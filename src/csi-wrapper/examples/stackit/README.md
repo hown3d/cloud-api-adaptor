@@ -41,18 +41,17 @@ kubectl patch daemonsets.apps -n kube-system csi-driver-node --patch-file=patch-
 ```
 
 6. Target control-plane
-7. Ignore reconcilation of ControlPlane:
+7. Ignore reconcilation of Shoot to stop reconcilations of the control-plane:
 
 ```
-kubectl annotate controlplane <SHOOTNAME> resources.gardener.cloud/ignore=true
+kubectl annotate shoot <SHOOT> shoot.gardener.cloud/ignore=true
 ```
 
 8. Patch the CSI Driver:
 
 ```
-
 kubectl patch deployments.apps csi-driver-controller --patch-file patch-controller.yaml
-
+kubectl scale deployment csi-driver-controller --replicas=1
 ```
 
 ## Example Workload With Provisioned Volume
