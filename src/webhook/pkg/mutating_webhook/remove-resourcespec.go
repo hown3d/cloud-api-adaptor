@@ -1,14 +1,19 @@
 package mutating_webhook
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
 
 	"github.com/confidential-containers/cloud-api-adaptor/src/webhook/pkg/utils"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -24,7 +29,7 @@ var logger = log.New(log.Writer(), "[pod-mutator] ", log.LstdFlags|log.Lmsgprefi
 
 // mutate POD spec
 // remove the POD resource spec
-func (a *PodMutator) mutatePod(pod *corev1.Pod) (*corev1.Pod, error) {
+func (a *PodMutator) mutatePod(ctx context.Context, pod *corev1.Pod) (*corev1.Pod, error) {
 	var runtimeClassName string
 	mpod := pod.DeepCopy()
 
@@ -36,17 +41,36 @@ func (a *PodMutator) mutatePod(pod *corev1.Pod) (*corev1.Pod, error) {
 		return mpod, nil
 	}
 
-	mpod = adjustResourceSpec(mpod)
+	overhead, err := a.runtimeClassOverhead(ctx, runtimeClassName)
+	if err != nil {
+		return nil, fmt.Errorf("calculating runtimeclass overhead: %w", err)
+	}
+
+	mpod = adjustResourceSpec(mpod, overhead)
 
 	return mpod, nil
+}
+
+func (a *PodMutator) runtimeClassOverhead(ctx context.Context, runtimeClassName string) (corev1.ResourceList, error) {
+	rtc := &nodev1.RuntimeClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: runtimeClassName,
+		},
+	}
+	if err := a.Client.Get(ctx, client.ObjectKeyFromObject(rtc), rtc); err != nil {
+		return corev1.ResourceList{}, fmt.Errorf("getting runtimeClass %s: %w", runtimeClassName, err)
+	}
+	if rtc.Overhead == nil {
+		return corev1.ResourceList{}, nil
+	}
+	return rtc.Overhead.PodFixed, nil
 }
 
 // function to remove resource spec from the pod spec
 // add the cumulative resources as annotation to pod spec
 // add the peer-pod resource to the first container in the pod spec
 
-func adjustResourceSpec(pod *corev1.Pod) *corev1.Pod {
-
+func adjustResourceSpec(pod *corev1.Pod, overhead corev1.ResourceList) *corev1.Pod {
 	// Get total CPU resource requests
 	cpuRequest := utils.GetResourceRequestQuantity(pod, corev1.ResourceCPU)
 
@@ -81,16 +105,25 @@ func adjustResourceSpec(pod *corev1.Pod) *corev1.Pod {
 
 	// Add cpu annotation
 	if !cpuRequest.IsZero() && cpuLimit.Cmp(cpuRequest) >= 0 {
+		if overhead.Cpu() != nil {
+			cpuLimit.Add(*overhead.Cpu())
+		}
 		logger.Printf("Adding CPU annotation based on cpuLimit (integer value): %d", cpuLimit.Value())
 		// We need the scaled value for the annotation and not the raw value like 1000m, 0.4 etc for CPU
 		annotations[PEERPODS_CPU_ANNOTATION] = strconv.FormatInt(cpuLimit.Value(), 10)
 	} else if cpuRequest.Sign() == 1 {
+		if overhead.Cpu() != nil {
+			cpuRequest.Add(*overhead.Cpu())
+		}
 		logger.Printf("Adding CPU annotation based on cpuRequest (integer value): %d", cpuRequest.Value())
 		annotations[PEERPODS_CPU_ANNOTATION] = strconv.FormatInt(cpuRequest.Value(), 10)
 	}
 
 	// Add memory annotation
 	if !memoryRequest.IsZero() && memoryLimit.Cmp(memoryRequest) >= 0 {
+		if overhead.Memory() != nil {
+			memoryLimit.Add(*overhead.Memory())
+		}
 		logger.Printf("Adding Memory annotation based on memoryLimit: %s", memoryLimit.String())
 		memoryLimitMiBStr, err := utils.ConvertMemoryQuantityToMib(memoryLimit)
 		if err != nil {
@@ -99,6 +132,9 @@ func adjustResourceSpec(pod *corev1.Pod) *corev1.Pod {
 		annotations[PEERPODS_MEMORY_ANNOTATION] = memoryLimitMiBStr
 
 	} else if memoryRequest.Sign() == 1 {
+		if overhead.Memory() != nil {
+			memoryRequest.Add(*overhead.Memory())
+		}
 		logger.Printf("Adding Memory annotation based on memoryRequest: %s", memoryRequest.String())
 		memoryRequestMiBStr, err := utils.ConvertMemoryQuantityToMib(memoryRequest)
 		if err != nil {

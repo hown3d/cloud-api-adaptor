@@ -27,6 +27,8 @@ import (
 )
 
 // +kubebuilder:webhook:admissionReviewVersions=v1,path=/mutate-v1-pod,mutating=true,failurePolicy=fail,groups="",resources=pods,verbs=create;update,versions=v1,name=mwebhook.peerpods.io,sideEffects=None
+// +kubebuilder:rbac:groups=node.k8s.io,resources=runtimeclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=create;update
 
 // podMutator mutates Pods
 type PodMutator struct {
@@ -43,7 +45,7 @@ func (a *PodMutator) Handle(ctx context.Context, req admission.Request) admissio
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	mutatedPod, _ := a.mutatePod(pod)
+	mutatedPod, _ := a.mutatePod(ctx, pod)
 	marshaledPod, err := json.Marshal(mutatedPod)
 	if err != nil {
 		return admission.Errored(http.StatusInternalServerError, err)
